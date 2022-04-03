@@ -1,0 +1,13 @@
+[package]
+name = "handlegraph-utils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+handlegraph = "0.5.0"
+gfa = "0.8.0"
+itertools = "0.10.1"
+bstr = "0.2.15"
+simple-sds = { git = "https://github.com/jltsiren/simple-sds" }
