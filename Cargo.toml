@@ -14,3 +14,4 @@ simple-sds = { git = "https://github.com/jltsiren/simple-sds" }
 serde = {version = "1.0.125", features = ["derive"]}
 substring = "1.4.5"
 rand = "0.8.5"
+clap = {version = "2.33.3"}

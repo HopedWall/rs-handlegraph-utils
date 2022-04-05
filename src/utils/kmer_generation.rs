@@ -53,7 +53,7 @@ pub struct GraphKmer {
     /// The last handle of the kmer
     pub(crate) last_handle: Handle,
     /// The orientation of the handles
-    pub(crate) handle_orient: bool,
+    pub handle_orient: bool,
     /// The number of forks the kmer has been involved in
     pub(crate) forks: u64,
 }

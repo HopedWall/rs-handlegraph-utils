@@ -50,7 +50,7 @@ impl GeneratedRead {
             seq: kmer.seq.clone(),
             path_id: None,
             length: kmer.seq.len(),
-            handles: kmer.all_handles.clone(), //TODO: fix
+            handles: kmer.all_handles.clone(),
             first_node_offset: kmer.begin_offset.position as usize,
             last_node_offset: kmer.end_offset.position as usize,
         }
@@ -74,7 +74,6 @@ impl GeneratedRead {
         );
         format!("{}\n{}", header, self.seq)
     }
-
 }
 
 pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Vec<GeneratedRead> {
