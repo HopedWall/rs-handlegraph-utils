@@ -11,3 +11,6 @@ gfa = "0.8.0"
 itertools = "0.10.1"
 bstr = "0.2.15"
 simple-sds = { git = "https://github.com/jltsiren/simple-sds" }
+serde = {version = "1.0.125", features = ["derive"]}
+substring = "1.4.5"
+rand = "0.8.5"

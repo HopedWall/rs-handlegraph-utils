@@ -1,7 +1,10 @@
+use crate::utils::kmer_generation::GraphKmer;
 use bstr::{ByteSlice, ByteVec};
-use handlegraph::handle::Handle;
+use handlegraph::handle::{Direction, Handle};
 use handlegraph::handlegraph::HandleGraph;
 use handlegraph::hashgraph::HashGraph;
+use itertools::Itertools;
+use rand::prelude::*;
 use simple_sds::bit_vector::rank_support::RankSupport;
 use simple_sds::bit_vector::*;
 use simple_sds::raw_vector::{AccessRaw, PushRaw, RawVector};
@@ -10,26 +13,46 @@ use std::fs::File;
 use std::io::Write;
 
 #[derive(Debug, Clone)]
-pub struct ReadFromPath {
+pub struct GeneratedRead {
     name: String,
     seq: String,
-    path_id: i64,
-    nodes: Vec<Handle>,
+    path_id: Option<i64>,
+    handles: Vec<Handle>,
     length: usize,
     first_node_offset: usize,
     last_node_offset: usize,
 }
 
-impl ReadFromPath {
-    fn new() -> Self {
-        ReadFromPath {
+impl GeneratedRead {
+    pub fn new() -> Self {
+        GeneratedRead {
             name: String::new(),
             seq: String::new(),
-            path_id: 0,
+            path_id: Some(0),
             length: 0,
-            nodes: vec![],
+            handles: vec![],
             first_node_offset: 0,
             last_node_offset: 0,
+        }
+    }
+
+    pub fn new_from_kmer(kmer: &GraphKmer, name: Option<&str>) -> Self {
+        let read_name = match name {
+            Some(input_name) => String::from(input_name),
+            _ => {
+                let mut rng = rand::thread_rng();
+                format!("read-{}", rng.gen::<u8>())
+            }
+        };
+
+        GeneratedRead {
+            name: read_name,
+            seq: kmer.seq.clone(),
+            path_id: None,
+            length: kmer.seq.len(),
+            handles: kmer.all_handles.clone(), //TODO: fix
+            first_node_offset: kmer.begin_offset.position as usize,
+            last_node_offset: kmer.end_offset.position as usize,
         }
     }
 
@@ -40,9 +63,9 @@ impl ReadFromPath {
 
     fn to_fasta(&self) -> String {
         let header = format!(
-            ">{},nodes:{:?},start_offset:{},end_offset:{}",
+            ">{} {{nodes:{:?},start_offset:{},end_offset:{}}}",
             self.name,
-            self.nodes
+            self.handles
                 .iter()
                 .map(|x| x.unpack_number())
                 .collect::<Vec<u64>>(),
@@ -51,15 +74,16 @@ impl ReadFromPath {
         );
         format!("{}\n{}", header, self.seq)
     }
+
 }
 
-pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Vec<ReadFromPath> {
-    let mut reads: Vec<ReadFromPath> = Vec::new();
+pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Vec<GeneratedRead> {
+    let mut reads: Vec<GeneratedRead> = Vec::new();
 
     let path = graph.paths.get(&path_id).unwrap();
     let path_nodes = path.nodes.clone();
 
-    let mut incomplete_read: Option<ReadFromPath> = None;
+    let mut incomplete_read: Option<GeneratedRead> = None;
     let mut read_count = 0;
     for curr_handle in path_nodes {
         let curr_handle_seq = String::from_utf8(graph.sequence(curr_handle)).unwrap();
@@ -72,7 +96,7 @@ pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Ve
             end = min(size - read.length, curr_handle_seq.len());
 
             read.extend_read(&curr_handle_seq[start..end]);
-            read.nodes.push(curr_handle.clone());
+            read.handles.push(curr_handle.clone());
             read.last_node_offset = end - 1;
 
             if read.length == size {
@@ -88,11 +112,11 @@ pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Ve
             let end = min(start + size, curr_handle_seq.len());
 
             //println!("Read seq is: {:#?}", read_seq);
-            let read = ReadFromPath {
+            let read = GeneratedRead {
                 name: format!("read-{}", read_count),
                 seq: curr_handle_seq[start..end].to_string(),
-                path_id: path_id,
-                nodes: vec![curr_handle],
+                path_id: Some(path_id),
+                handles: vec![curr_handle],
                 length: end - start,
                 first_node_offset: start,
                 last_node_offset: end - 1,
@@ -125,13 +149,21 @@ pub fn split_sequence_into_disjoint_substrings(sequence: &str, k: usize) -> Vec<
         .collect()
 }
 
-pub fn reads_to_fasta_file(reads: &Vec<ReadFromPath>, file_name: &str) -> std::io::Result<()> {
+pub fn reads_to_fasta_file(reads: &Vec<GeneratedRead>, file_name: &str) -> std::io::Result<()> {
     let read_strings: Vec<String> = reads.iter().map(|read| read.to_fasta()).collect();
     let mut file =
         File::create(&file_name).unwrap_or_else(|_| panic!("Couldn't create file {}", &file_name));
     file.write_all(&read_strings.join("\n").as_bytes())
         .unwrap_or_else(|_| panic!("Couldn't write to file {}", &file_name));
     Ok(())
+}
+
+pub fn reads_from_multiple_kmers(kmers: &Vec<GraphKmer>) -> Vec<GeneratedRead> {
+    kmers
+        .iter()
+        .enumerate()
+        .map(|(i, kmer)| GeneratedRead::new_from_kmer(kmer, Some(&format!("Read-{}", i))))
+        .collect()
 }
 
 #[cfg(test)]
@@ -203,6 +235,6 @@ mod tests {
             "fasta reads: {:#?}",
             reads.iter().map(|r| r.to_fasta()).collect::<Vec<String>>()
         );
-        //reads_to_fasta_file(&reads, "reads.fasta");
+        reads_to_fasta_file(&reads, "reads.fasta").ok();
     }
 }
