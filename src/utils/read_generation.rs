@@ -11,6 +11,7 @@ use simple_sds::raw_vector::{AccessRaw, PushRaw, RawVector};
 use std::cmp::min;
 use std::fs::File;
 use std::io::Write;
+use rand::{thread_rng, Rng};
 
 #[derive(Debug, Clone)]
 pub struct GeneratedRead {
@@ -63,7 +64,7 @@ impl GeneratedRead {
 
     fn to_fasta(&self) -> String {
         let header = format!(
-            ">{} {{nodes:{:?},start_offset:{},end_offset:{}}}",
+            ">{} {{\"nodes\":{:?},\"start_offset\":{},\"end_offset\":{}}}",
             self.name,
             self.handles
                 .iter()
@@ -133,6 +134,42 @@ pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Ve
     }
 
     reads
+}
+
+pub fn add_errors_to_reads(kmers: &mut Vec<GraphKmer>, error_rate: f64) {
+    let mut rng = thread_rng();
+    let alphabet = ['A', 'C', 'G', 'T'];
+
+    for kmer in kmers {
+        let seq_with_errors =
+            kmer
+                .seq
+                .chars()
+                .map(|og_base| {
+                    match rng.gen_bool(error_rate) {
+                        true => {
+                            let index = rng.gen_range(0..4);
+                            let new_base: char = alphabet.get(index).unwrap().clone();
+                            println!("Replacing {} with {}", og_base, new_base);
+                            new_base
+                        },
+                        false => og_base,
+                    }
+                })
+                .collect();
+
+        kmer.seq = seq_with_errors
+        /*
+        for mut base in &mut kmer.seq.chars() {
+            if rng.gen_bool(error_rate) {
+                let index = rng.gen_range(0..4);
+                let new_letter: char = alphabet.get(index).unwrap().clone();
+                println!("Replacing {} with {}", base, new_letter);
+                base = new_letter;
+            }
+        }
+        */
+    }
 }
 
 pub fn split_sequence_into_kmers(sequence: &str, k: usize) -> Vec<String> {
