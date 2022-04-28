@@ -9,7 +9,7 @@ use simple_sds::bit_vector::rank_support::RankSupport;
 use simple_sds::bit_vector::*;
 use simple_sds::raw_vector::{AccessRaw, PushRaw, RawVector};
 use std::cmp::min;
-use std::fs::File;
+use std::fs::{File, read};
 use std::io::Write;
 use rand::{thread_rng, Rng};
 
@@ -22,6 +22,7 @@ pub struct GeneratedRead {
     length: usize,
     first_node_offset: usize,
     last_node_offset: usize,
+    errors: Vec<usize>
 }
 
 impl GeneratedRead {
@@ -34,10 +35,14 @@ impl GeneratedRead {
             handles: vec![],
             first_node_offset: 0,
             last_node_offset: 0,
+            errors: vec![]
         }
     }
 
-    pub fn new_from_kmer(kmer: &GraphKmer, name: Option<&str>) -> Self {
+    pub fn new_from_kmer(kmer: &GraphKmer, name: Option<&str>, err_rate: Option<f64>) -> Self {
+        let mut rng = thread_rng();
+        let alphabet = ['A', 'C', 'G', 'T'];
+
         let read_name = match name {
             Some(input_name) => String::from(input_name),
             _ => {
@@ -46,14 +51,42 @@ impl GeneratedRead {
             }
         };
 
+        let mut read_seq = kmer.seq.clone();
+        let mut err_positions: Vec<usize> = Vec::new();
+
+        if let Some(error_rate) = err_rate {
+            let seq_with_errors =
+                kmer
+                    .seq
+                    .chars()
+                    .enumerate()
+                    .map(|(i,og_base)| {
+                        match rng.gen_bool(error_rate) {
+                            true => {
+                                let index = rng.gen_range(0..4);
+                                let new_base: char = alphabet.get(index).unwrap().clone();
+                                println!("[{}]: Replacing {} with {} (pos: {})", read_name, og_base, new_base, i);
+                                err_positions.push(i);
+                                new_base
+                            },
+                            false => og_base,
+                        }
+                    })
+                    .collect();
+
+            err_positions.sort();
+            read_seq = seq_with_errors;
+        }
+
         GeneratedRead {
             name: read_name,
-            seq: kmer.seq.clone(),
+            seq: read_seq,
             path_id: None,
             length: kmer.seq.len(),
             handles: kmer.all_handles.clone(),
             first_node_offset: kmer.begin_offset.position as usize,
             last_node_offset: kmer.end_offset.position as usize,
+            errors: err_positions
         }
     }
 
@@ -64,14 +97,15 @@ impl GeneratedRead {
 
     fn to_fasta(&self) -> String {
         let header = format!(
-            ">{} {{\"nodes\":{:?},\"start_offset\":{},\"end_offset\":{}}}",
+            ">{} {{\"nodes\":{:?},\"start_offset\":{},\"end_offset\":{},\"errors\":{:?}}}",
             self.name,
             self.handles
                 .iter()
                 .map(|x| x.unpack_number())
                 .collect::<Vec<u64>>(),
             self.first_node_offset,
-            self.last_node_offset
+            self.last_node_offset,
+            self.errors
         );
         format!("{}\n{}", header, self.seq)
     }
@@ -120,6 +154,7 @@ pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Ve
                 length: end - start,
                 first_node_offset: start,
                 last_node_offset: end - 1,
+                errors: vec![]
             };
 
             if read.length == size {
@@ -134,42 +169,6 @@ pub fn exact_reads_from_path(graph: &HashGraph, path_id: i64, size: usize) -> Ve
     }
 
     reads
-}
-
-pub fn add_errors_to_reads(kmers: &mut Vec<GraphKmer>, error_rate: f64) {
-    let mut rng = thread_rng();
-    let alphabet = ['A', 'C', 'G', 'T'];
-
-    for kmer in kmers {
-        let seq_with_errors =
-            kmer
-                .seq
-                .chars()
-                .map(|og_base| {
-                    match rng.gen_bool(error_rate) {
-                        true => {
-                            let index = rng.gen_range(0..4);
-                            let new_base: char = alphabet.get(index).unwrap().clone();
-                            println!("Replacing {} with {}", og_base, new_base);
-                            new_base
-                        },
-                        false => og_base,
-                    }
-                })
-                .collect();
-
-        kmer.seq = seq_with_errors
-        /*
-        for mut base in &mut kmer.seq.chars() {
-            if rng.gen_bool(error_rate) {
-                let index = rng.gen_range(0..4);
-                let new_letter: char = alphabet.get(index).unwrap().clone();
-                println!("Replacing {} with {}", base, new_letter);
-                base = new_letter;
-            }
-        }
-        */
-    }
 }
 
 pub fn split_sequence_into_kmers(sequence: &str, k: usize) -> Vec<String> {
@@ -194,11 +193,11 @@ pub fn reads_to_fasta_file(reads: &Vec<GeneratedRead>, file_name: &str) -> std::
     Ok(())
 }
 
-pub fn reads_from_multiple_kmers(kmers: &Vec<GraphKmer>) -> Vec<GeneratedRead> {
+pub fn reads_from_multiple_kmers(kmers: &Vec<GraphKmer>, errors: bool, err_rate: Option<f64>) -> Vec<GeneratedRead> {
     kmers
         .iter()
         .enumerate()
-        .map(|(i, kmer)| GeneratedRead::new_from_kmer(kmer, Some(&format!("Read-{}", i))))
+        .map(|(i, kmer)| GeneratedRead::new_from_kmer(kmer, Some(&format!("Read-{}", i)), err_rate))
         .collect()
 }
 

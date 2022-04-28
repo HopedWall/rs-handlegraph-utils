@@ -317,7 +317,7 @@ mod tests {
             .filter(|k| k.handle_orient == true)
             .collect();
         //println!("Kmers: {:#?}", fwd_kmers);
-        let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&fwd_kmers);
+        let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&fwd_kmers, false, None);
         println!("Reads: {:#?}", reads);
         reads_to_fasta_file(&reads, "reads.fasta").ok();
     }

@@ -3,7 +3,7 @@ use gfa::gfa::GFA;
 use gfa::parser::GFAParser;
 use handlegraph::hashgraph::HashGraph;
 use handlegraph_utils::utils::kmer_generation::{generate_kmers_from_graph, GraphKmer};
-use handlegraph_utils::utils::read_generation::{reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead, add_errors_to_reads};
+use handlegraph_utils::utils::read_generation::{reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead};
 use std::path::PathBuf;
 
 fn main() {
@@ -115,17 +115,11 @@ pub fn generate_reads_from_graph(
         .filter(|k| k.handle_orient == true)
         .collect();
 
-    if errors {
-        if let Some(rate) = err_rate {
-            add_errors_to_reads(&mut fwd_kmers, rate);
-        }
-    }
-
     let n_fwd_kmers: Vec<GraphKmer> = match n_reads {
         Some(amount) => fwd_kmers[0..amount as usize].to_vec(),
         None => fwd_kmers
     };
 
-    let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&n_fwd_kmers);
+    let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&n_fwd_kmers, errors, err_rate);
     reads_to_fasta_file(&reads, fasta_file)
 }
