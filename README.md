@@ -22,4 +22,13 @@ handlegraph-utils -i graph.gfa -n 1000 --len 100 --out reads.fa
 
 ## Generate 1000 reads of length 100 from the graph, with an error rate of 5%, and put them in reads-error.fa
 handlegraph-utils -i graph.gfa -n 1000 --len 100 --out reads-errors.fa --errors -r 0.05
+
+## For each read, the header contains:
+## - nodes used to generate the read
+## - start offset on the first node
+## - end offset on the last node
+## - positions on the read that contain errors (i.e. mutations)
+cat reads-errors.fa
+>Read-0 {"nodes":[13],"start_offset":6,"end_offset":106,"errors":[1, 82]}
+...
 ```
