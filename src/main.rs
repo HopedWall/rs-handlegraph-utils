@@ -3,7 +3,9 @@ use gfa::gfa::GFA;
 use gfa::parser::GFAParser;
 use handlegraph::hashgraph::HashGraph;
 use handlegraph_utils::utils::kmer_generation::{generate_kmers_from_graph, GraphKmer};
-use handlegraph_utils::utils::read_generation::{reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead};
+use handlegraph_utils::utils::read_generation::{
+    reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead,
+};
 use std::path::PathBuf;
 
 fn main() {
@@ -26,7 +28,7 @@ fn main() {
                 .long("out")
                 .value_name("FILE.FA")
                 .help("Sets the file that will contain the reads")
-                .required(true)
+                .required(false)
                 .takes_value(true),
         )
         .arg(
@@ -70,9 +72,7 @@ fn main() {
         .value_of("input")
         .expect("Could not parse argument --input");
 
-    let out_fasta_path: &str = matches
-        .value_of("output")
-        .expect("Could not parse argument --output");
+    let out_fasta_path: Option<&str> = matches.value_of("output");
 
     let read_length: u64 = matches
         .value_of("length")
@@ -81,19 +81,37 @@ fn main() {
         .unwrap();
 
     let n_reads: Option<u64> = match matches.is_present("n-reads") {
-        true => matches.value_of("n-reads").expect("Could not parse argument --n-reads").parse::<u64>().ok(),
-        false => None
+        true => matches
+            .value_of("n-reads")
+            .expect("Could not parse argument --n-reads")
+            .parse::<u64>()
+            .ok(),
+        false => None,
     };
 
     let errors = matches.is_present("errors");
     let error_rate: Option<f64> = match errors {
-        true => matches.value_of("error-rate").expect("Could not parse argument --error-rate").parse::<f64>().ok(),
+        true => matches
+            .value_of("error-rate")
+            .expect("Could not parse argument --error-rate")
+            .parse::<f64>()
+            .ok(),
         false => None,
     };
 
-    match generate_reads_from_graph(&in_gfa_path, read_length, n_reads, out_fasta_path, errors, error_rate) {
+    match generate_reads_from_graph(
+        &in_gfa_path,
+        read_length,
+        n_reads,
+        out_fasta_path,
+        errors,
+        error_rate,
+    ) {
         Err(e) => panic!("{}", e),
-        _ => println!("Reads stored correctly in {}!", out_fasta_path),
+        _ => println!(
+            "Reads stored correctly in {}!",
+            out_fasta_path.unwrap_or("standard output")
+        ),
     }
 }
 
@@ -101,25 +119,28 @@ pub fn generate_reads_from_graph(
     graph_file: &str,
     read_length: u64,
     n_reads: Option<u64>,
-    fasta_file: &str,
+    fasta_file: Option<&str>,
     errors: bool,
-    err_rate: Option<f64>
+    err_rate: Option<f64>,
 ) -> std::io::Result<()> {
     let parser = GFAParser::new();
     let gfa: GFA<usize, ()> = parser.parse_file(&PathBuf::from(graph_file)).unwrap();
     let graph = HashGraph::from_gfa(&gfa);
 
-    let fwd_rev_kmers = generate_kmers_from_graph(&graph, read_length, Some(100), Some(100));
-    let mut fwd_kmers: Vec<GraphKmer> = fwd_rev_kmers
-        .into_iter()
-        .filter(|k| k.handle_orient == true)
-        .collect();
+    let fwd_kmers =
+        generate_kmers_from_graph(&graph, read_length, Some(100), Some(100), n_reads, true);
 
+    /*
     let n_fwd_kmers: Vec<GraphKmer> = match n_reads {
         Some(amount) => fwd_kmers[0..amount as usize].to_vec(),
         None => fwd_kmers
     };
-
     let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&n_fwd_kmers, errors, err_rate);
-    reads_to_fasta_file(&reads, fasta_file)
+     */
+
+    let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&fwd_kmers, errors, err_rate);
+    match fasta_file {
+        Some(output_file) => reads_to_fasta_file(&reads, output_file),
+        _ => Ok(reads.iter().for_each(|r| println!("{}", r.to_fasta()))),
+    }
 }

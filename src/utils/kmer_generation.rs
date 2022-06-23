@@ -90,18 +90,23 @@ pub fn generate_kmers_from_graph(
     k: u64,
     edge_max: Option<u64>,
     degree_max: Option<u64>,
+    n_reads: Option<u64>,
+    only_forward: bool,
 ) -> Vec<GraphKmer> {
     let mut complete_kmers: Vec<GraphKmer> = Vec::new();
 
     let sorted_graph_handles: Vec<Handle> = graph.handles_iter().sorted().collect();
 
-    for forward_handle in sorted_graph_handles {
+    'outer: for forward_handle in sorted_graph_handles {
         let mut handle: Handle;
         let mut orient: bool;
 
-        // Kmers will be generated from both forward and reverse, as handlegraph is capable
-        // of storing both
-        for handle_orient in &[true, false] {
+        let possible_orients = match only_forward {
+            true => vec![true],
+            false => vec![true, false],
+        };
+
+        for handle_orient in possible_orients {
             match handle_orient {
                 true => {
                     handle = forward_handle;
@@ -162,9 +167,13 @@ pub fn generate_kmers_from_graph(
                 // NOTE: this implies that the sequence encoded by the current handle
                 // has size >= k
                 if (kmer.seq.len() as u64) == k {
-                    //if !complete_kmers.contains(&kmer) {
                     complete_kmers.push(kmer);
-                    //}
+
+                    if let Some(max_n_reads) = n_reads {
+                        if complete_kmers.len() >= max_n_reads as usize {
+                            break 'outer;
+                        }
+                    }
                 } else {
                     // The kmer is incomplete, thus will have to be completed to reach size k
 
@@ -217,9 +226,13 @@ pub fn generate_kmers_from_graph(
                 }
 
                 if (incomplete_kmer.seq.len() as u64) == k {
-                    //if !complete_kmers.contains(&incomplete_kmer) {
                     complete_kmers.push(incomplete_kmer);
-                    //}
+
+                    if let Some(max_n_reads) = n_reads {
+                        if complete_kmers.len() >= max_n_reads as usize {
+                            break 'outer;
+                        }
+                    }
                 } else {
                     // NOTE: if there is no neighbor, the kmer does not get re-added
                     // to the incomplete ones, so that the external loop can end
@@ -311,7 +324,7 @@ mod tests {
     #[test]
     fn test_generate_reads() {
         let graph = create_simple_graph();
-        let fwd_rev_kmers = generate_kmers_from_graph(&graph, 3, Some(10), Some(10));
+        let fwd_rev_kmers = generate_kmers_from_graph(&graph, 3, Some(10), Some(10), None, true);
         let fwd_kmers: Vec<GraphKmer> = fwd_rev_kmers
             .into_iter()
             .filter(|k| k.handle_orient == true)
