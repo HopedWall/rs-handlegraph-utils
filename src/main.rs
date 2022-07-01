@@ -4,7 +4,7 @@ use gfa::parser::GFAParser;
 use handlegraph::hashgraph::HashGraph;
 use handlegraph_utils::utils::kmer_generation::{generate_kmers_from_graph, GraphKmer};
 use handlegraph_utils::utils::read_generation::{
-    reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead,
+    reads_from_multiple_kmers, reads_to_fasta_file, GeneratedRead, extract_read_direct
 };
 use std::path::PathBuf;
 
@@ -127,6 +127,8 @@ pub fn generate_reads_from_graph(
     let gfa: GFA<usize, ()> = parser.parse_file(&PathBuf::from(graph_file)).unwrap();
     let graph = HashGraph::from_gfa(&gfa);
 
+    /*
+    println!("Generating kmers...");
     let fwd_kmers =
         generate_kmers_from_graph(&graph, read_length, Some(100), Some(100), n_reads, true);
 
@@ -138,9 +140,14 @@ pub fn generate_reads_from_graph(
     let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&n_fwd_kmers, errors, err_rate);
      */
 
+    println!("Generating reads...");
     let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&fwd_kmers, errors, err_rate);
     match fasta_file {
         Some(output_file) => reads_to_fasta_file(&reads, output_file),
         _ => Ok(reads.iter().for_each(|r| println!("{}", r.to_fasta()))),
     }
+    */
+
+    extract_read_direct(&graph, read_length, n_reads, true, err_rate, fasta_file)
+
 }

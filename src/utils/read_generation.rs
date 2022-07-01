@@ -12,6 +12,8 @@ use rand::{thread_rng, Rng};
 use std::cmp::min;
 use std::fs::{read, File};
 use std::io::Write;
+use crate::utils::kmer_generation::SeqPos;
+use substring::Substring;
 
 #[derive(Debug, Clone)]
 pub struct GeneratedRead {
@@ -77,9 +79,9 @@ impl GeneratedRead {
             err_positions.sort();
             read_seq = seq_with_errors;
 
-            println!("Kmer: {}", kmer.seq);
-            println!("Read: {}", read_seq);
-            println!("Errors: {:?}", err_positions);
+            //println!("Kmer: {}", kmer.seq);
+            //println!("Read: {}", read_seq);
+            //println!("Errors: {:?}", err_positions);
         }
 
         GeneratedRead {
@@ -112,6 +114,10 @@ impl GeneratedRead {
             self.errors
         );
         format!("{}\n{}", header, self.seq)
+    }
+
+    pub fn fasta_from_kmer(kmer: &GraphKmer, name: Option<&str>, err_rate: Option<f64>) -> String {
+        GeneratedRead::new_from_kmer(kmer, name, err_rate).to_fasta()
     }
 }
 
@@ -190,10 +196,10 @@ pub fn split_sequence_into_disjoint_substrings(sequence: &str, k: usize) -> Vec<
 
 pub fn reads_to_fasta_file(reads: &Vec<GeneratedRead>, file_name: &str) -> std::io::Result<()> {
     let read_strings: Vec<String> = reads.iter().map(|read| read.to_fasta()).collect();
-    let mut file =
-        File::create(&file_name).unwrap_or_else(|_| panic!("Couldn't create file {}", &file_name));
-    file.write_all(&read_strings.join("\n").as_bytes())
-        .unwrap_or_else(|_| panic!("Couldn't write to file {}", &file_name));
+    println!("Creating fasta file...");
+    let mut file = File::create(&file_name)?;
+    println!("Writing to fasta file...");
+    file.write_all(&read_strings.join("\n").as_bytes())?;
     Ok(())
 }
 
@@ -207,6 +213,202 @@ pub fn reads_from_multiple_kmers(
         .enumerate()
         .map(|(i, kmer)| GeneratedRead::new_from_kmer(kmer, Some(&format!("Read-{}", i)), err_rate))
         .collect()
+}
+
+fn write_kmer_to_file(kmer: GraphKmer, read_count: &mut u64, err_rate: &Option<f64>, file: &mut Option<File>) -> std::io::Result<()> {
+    let read_name = format!("read-{}", read_count);
+    let fasta = format!("{}\n",GeneratedRead::fasta_from_kmer(&kmer, Some(&read_name), *err_rate));
+
+    if let Some(file_handle) = file {
+        file_handle.write(fasta.as_bytes());
+    } else {
+        print!("{}", fasta);
+    }
+
+    *read_count += 1;
+
+    Ok(())
+}
+
+pub fn extract_read_direct(graph: &HashGraph, k: u64, n_reads: Option<u64>, only_forward: bool, err_rate: Option<f64>, fasta_file: Option<&str>) -> std::io::Result<()> {
+    println!("Creating fasta file...");
+    let mut file: Option<File> = match fasta_file {
+        Some(filename) => File::create(filename).ok(),
+        None => None
+    };
+
+    let mut read_count: u64 = 0;
+    println!("Generating reads...");
+    
+    let sorted_graph_handles: Vec<Handle> = graph.handles_iter().sorted().collect();
+
+    'outer: for forward_handle in sorted_graph_handles {
+        let mut handle: Handle;
+        let mut orient: bool;
+
+        let possible_orients = match only_forward {
+            true => vec![true],
+            false => vec![true, false],
+        };
+
+        for handle_orient in possible_orients {
+            match handle_orient {
+                true => {
+                    handle = forward_handle;
+                    orient = true;
+                }
+                false => {
+                    handle = forward_handle.flip();
+                    orient = false;
+                }
+            }
+
+            let starting_handle = handle.clone();
+
+            // Get current node/handle
+            let mut handle_seq = graph.sequence(handle).into_string_lossy();
+            let mut handle_length = handle_seq.len() as u64;
+
+            // This will store kmers that have not yet reached size k, which
+            // will have to be completed from the neighbours of the handle
+            let mut incomplete_kmers: Vec<GraphKmer> = Vec::new();
+
+            /*
+            println!("Node length: {}", handle_seq.len());
+            println!("A - Complete kmers: {}", complete_kmers.len());
+            println!("A - Incomplete kmers: {}", incomplete_kmers.len());
+            */
+
+            // Try generating the "internal" kmers from the given handle
+            for i in 0..handle_length {
+                let begin = i;
+                let end = min(i + k, handle_length);
+                let kmer = GraphKmer {
+                    seq: handle_seq
+                        .substring(begin as usize, end as usize)
+                        .to_string(),
+                    begin_offset: SeqPos::new_from_bool(handle.is_reverse(), begin),
+                    end_offset: SeqPos::new_from_bool(handle.is_reverse(), end),
+                    all_handles: vec![handle],
+                    first_handle: handle,
+                    last_handle: handle,
+                    handle_orient: orient,
+                    forks: 0,
+                };
+
+                // Ignore Ns in kmer generation
+                if kmer.seq.contains('N') {
+                    continue;
+                }
+
+                // If the kmer has already reached size k...
+                // NOTE: this implies that the sequence encoded by the current handle
+                // has size >= k
+                if (kmer.seq.len() as u64) == k {
+                    write_kmer_to_file(kmer, &mut read_count, &err_rate, &mut file).ok();
+
+                    if let Some(max_n_reads) = n_reads {
+                        if read_count >= max_n_reads {
+                            break 'outer;
+                        }
+                    }
+                } else {
+                    // The kmer is incomplete, thus will have to be completed to reach size k
+
+                    // Create a copy of the incomplete kmer for each neighbour handle,
+                    // so that they can be completed
+
+                    //let close : Vec<Handle> = graph.handle_edges_iter(handle, Direction::Right).collect();
+                    //println!("A - Creating incomplete kmers for {} handles", close.len());
+                    for neighbor in graph.handle_edges_iter(handle, Direction::Right) {
+
+                        if orient == true && starting_handle.unpack_number() > neighbor.unpack_number()
+                        || orient == false && starting_handle.unpack_number() < neighbor.unpack_number() {
+                            //println!("Dropping kmer: {:?}", kmer);
+                            continue
+                        }
+
+                        let mut inc_kmer = kmer.clone();
+                        inc_kmer.last_handle = neighbor;
+
+                        incomplete_kmers.push(inc_kmer);
+                    }
+                
+                }
+            }
+            
+            /*
+            println!("B - Complete kmers: {}", complete_kmers.len());
+            println!("B - Incomplete kmers: {}", incomplete_kmers.len());
+            */
+
+            // Then complete all incomplete kmers
+            while let Some(mut incomplete_kmer) = incomplete_kmers.pop() {
+                handle = incomplete_kmer.last_handle;
+                handle_seq = graph.sequence(handle).into_string_lossy();
+                handle_length = handle_seq.len() as u64;
+
+                let end = min(k - (incomplete_kmer.seq.len() as u64), handle_length);
+                let str_to_add = handle_seq.substring(0, end as usize).to_string();
+                incomplete_kmer.extend_kmer(str_to_add, handle);
+
+                // Ignore Ns during kmer generation
+                if incomplete_kmer.seq.contains('N') {
+                    continue;
+                }
+
+                if (incomplete_kmer.seq.len() as u64) == k {
+                    
+                    write_kmer_to_file(incomplete_kmer, &mut read_count, &err_rate, &mut file).ok();
+
+                    if let Some(max_n_reads) = n_reads {
+                        if read_count >= max_n_reads {
+                            break 'outer;
+                        }
+                    }
+
+                    if let Some(max_n_reads) = n_reads {
+                        if read_count >= max_n_reads {
+                            break 'outer;
+                        }
+                    }
+
+                } else {
+                    // NOTE: if there is no neighbor, the kmer does not get re-added
+                    // to the incomplete ones, so that the external loop can end
+                    //let close : Vec<Handle> = graph.handle_edges_iter(handle, Direction::Right).collect();
+                    //println!("B - Creating incomplete kmers for {} handles", close.len());
+                    for neighbor in graph.handle_edges_iter(handle, Direction::Right) {
+
+                        if orient == true && starting_handle.unpack_number() > neighbor.unpack_number()
+                            || orient == false && starting_handle.unpack_number() < neighbor.unpack_number() {
+                                //println!("Dropping kmer: {:?}", incomplete_kmer);
+                                continue
+                        }
+
+                        let mut inc_kmer = incomplete_kmer.clone();
+                        inc_kmer.add_handle_to_complete(neighbor);
+
+                        incomplete_kmers.push(inc_kmer);
+                    }
+                }
+            }
+
+            /*
+            println!("C - Complete kmers: {}", complete_kmers.len());
+            println!("C - Incomplete kmers: {}\n", incomplete_kmers.len());
+            */
+
+            // IMPORTANT NOTE: a single iteration (of the most external for loop) completes
+            // ALL possible kmers that start in the given handle. If the graph "ends" but the
+            // kmer cannot reach size k (i.e. it is incomplete) it gets discarded.
+            assert!(incomplete_kmers.is_empty());
+        }
+    }
+
+
+
+    Ok(())
 }
 
 #[cfg(test)]

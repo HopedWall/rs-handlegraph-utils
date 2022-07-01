@@ -71,14 +71,14 @@ impl PartialEq for Kmer {
 impl GraphKmer {
     /// This function allows for a kmer to be extended, used when the
     /// kmer is on more than one handle
-    fn extend_kmer(&mut self, new_seq: String, new_handle: Handle) {
+    pub fn extend_kmer(&mut self, new_seq: String, new_handle: Handle) {
         self.seq.push_str(&new_seq);
         self.end_offset = SeqPos::new_from_bool(new_handle.is_reverse(), new_seq.len() as u64);
         self.last_handle = new_handle;
         self.all_handles.push(new_handle);
     }
 
-    fn add_handle_to_complete(&mut self, new_handle: Handle) {
+    pub fn add_handle_to_complete(&mut self, new_handle: Handle) {
         self.last_handle = new_handle;
     }
 }
@@ -118,6 +118,8 @@ pub fn generate_kmers_from_graph(
                 }
             }
 
+            let starting_handle = handle.clone();
+
             // Check if the handle has more outgoing edges than the maximum allowed,
             // and if that's the case, skip the current handle
             if let Some(degree_max) = degree_max {
@@ -140,6 +142,12 @@ pub fn generate_kmers_from_graph(
             // This will store kmers that have not yet reached size k, which
             // will have to be completed from the neighbours of the handle
             let mut incomplete_kmers: Vec<GraphKmer> = Vec::new();
+
+            /*
+            println!("Node length: {}", handle_seq.len());
+            println!("A - Complete kmers: {}", complete_kmers.len());
+            println!("A - Incomplete kmers: {}", incomplete_kmers.len());
+            */
 
             // Try generating the "internal" kmers from the given handle
             for i in 0..handle_length {
@@ -196,7 +204,16 @@ pub fn generate_kmers_from_graph(
                         // Create a copy of the incomplete kmer for each neighbour handle,
                         // so that they can be completed
 
+                        let close : Vec<Handle> = graph.handle_edges_iter(handle, Direction::Right).collect();
+                        //println!("A - Creating incomplete kmers for {} handles", close.len());
                         for neighbor in graph.handle_edges_iter(handle, Direction::Right) {
+
+                            if orient == true && starting_handle.unpack_number() > neighbor.unpack_number()
+                            || orient == false && starting_handle.unpack_number() < neighbor.unpack_number() {
+                                //println!("Dropping kmer: {:?}", kmer);
+                                continue
+                            }
+
                             let mut inc_kmer = kmer.clone();
                             inc_kmer.last_handle = neighbor;
 
@@ -209,6 +226,11 @@ pub fn generate_kmers_from_graph(
                     }
                 }
             }
+            
+            /*
+            println!("B - Complete kmers: {}", complete_kmers.len());
+            println!("B - Incomplete kmers: {}", incomplete_kmers.len());
+            */
 
             // Then complete all incomplete kmers
             while let Some(mut incomplete_kmer) = incomplete_kmers.pop() {
@@ -236,7 +258,16 @@ pub fn generate_kmers_from_graph(
                 } else {
                     // NOTE: if there is no neighbor, the kmer does not get re-added
                     // to the incomplete ones, so that the external loop can end
+                    let close : Vec<Handle> = graph.handle_edges_iter(handle, Direction::Right).collect();
+                    //println!("B - Creating incomplete kmers for {} handles", close.len());
                     for neighbor in graph.handle_edges_iter(handle, Direction::Right) {
+
+                        if orient == true && starting_handle.unpack_number() > neighbor.unpack_number()
+                            || orient == false && starting_handle.unpack_number() < neighbor.unpack_number() {
+                                //println!("Dropping kmer: {:?}", incomplete_kmer);
+                                continue
+                        }
+
                         let mut next_count: u64 = 0;
                         if edge_max.is_some() || degree_max.is_some() {
                             graph
@@ -263,6 +294,11 @@ pub fn generate_kmers_from_graph(
                 }
             }
 
+            /*
+            println!("C - Complete kmers: {}", complete_kmers.len());
+            println!("C - Incomplete kmers: {}\n", incomplete_kmers.len());
+            */
+
             // IMPORTANT NOTE: a single iteration (of the most external for loop) completes
             // ALL possible kmers that start in the given handle. If the graph "ends" but the
             // kmer cannot reach size k (i.e. it is incomplete) it gets discarded.
@@ -273,10 +309,11 @@ pub fn generate_kmers_from_graph(
     // Sort the kmers so that equal kmers (= having the same sequence) are close to each other
     // Note that the same kmer can appear in different places
     // (e.g. CACTTCAC -> CAC and CAC must be consecutive in the ordering)
-    complete_kmers.sort_by(|x, y| x.seq.cmp(&y.seq));
+    //complete_kmers.sort_by(|x, y| x.seq.cmp(&y.seq));
+    complete_kmers.sort_by(|x, y| x.first_handle.cmp(&y.first_handle));
     // Also dedup the vec as exact duplicates only waste space. Also note that dedup only works
     // on consecutive duplicates, so only by sorting beforehand it works correctly.
-    complete_kmers.dedup();
+    //complete_kmers.dedup();
 
     complete_kmers
 }
@@ -321,6 +358,24 @@ mod tests {
         graph
     }
 
+        /// This function creates a simple graph, used for debugging
+    ///      2: CTGGC 
+    ///       |    \
+    /// FWD  1: AAAC  -  3: ATT
+    fn create_graph_loop() -> HashGraph {
+        let mut graph: HashGraph = HashGraph::new();
+
+        let h1 = graph.create_handle("AAAC".as_bytes(), 1);
+        let h2 = graph.create_handle("CTGGC".as_bytes(), 2);
+        let h3 = graph.create_handle("ATT".as_bytes(), 3);
+
+        graph.create_edge(&Edge(h1, h2));
+        graph.create_edge(&Edge(h2, h1));
+        graph.create_edge(&Edge(h1, h3));
+
+        graph
+    }
+
     #[test]
     fn test_generate_reads() {
         let graph = create_simple_graph();
@@ -333,5 +388,22 @@ mod tests {
         let reads: Vec<GeneratedRead> = reads_from_multiple_kmers(&fwd_kmers, false, None);
         println!("Reads: {:#?}", reads);
         reads_to_fasta_file(&reads, "reads.fasta").ok();
+    }
+
+    #[test]
+    fn test_generate_reads_cmp() {
+        let graph = create_simple_graph();
+        let kmers_2 = generate_kmers_from_graph(&graph, 2, Some(10), Some(10), None, true);
+        let kmers_3 = generate_kmers_from_graph(&graph, 3, Some(10), Some(10), None, true);
+        println!("Kmers_2: {:?} (len: {})", kmers_2.iter().map(|x| x.seq.as_str()).collect::<Vec<&str>>(), kmers_2.len());
+        println!("Kmers_3: {:?} (len: {})", kmers_3.iter().map(|x| x.seq.as_str()).collect::<Vec<&str>>(), kmers_3.len());
+        assert!(kmers_2.len() >= kmers_3.len())
+    }
+
+    #[test]
+    fn test_loop() {
+        let graph = create_graph_loop();
+        let kmers = generate_kmers_from_graph(&graph, 3, None, None, None, true);
+        println!("Found kmers: {:?}", kmers.iter().map(|x| x.seq.as_str()).collect::<Vec<&str>>())
     }
 }
